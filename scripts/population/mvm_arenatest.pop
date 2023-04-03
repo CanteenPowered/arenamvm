@@ -1,0 +1,86 @@
+ArenaPopulation
+{
+    // Global options
+    StartingCurrency                1000
+    CanBotsAttackWhileInSpawnRoom   no
+    AddSentryBusterWhenDamageDealtExceeds 3000
+    AddSentryBusterWhenKillCountExceeds 15
+
+    Wave
+    {
+        Sound "Announcer.IncomingMob" 
+
+        WaveSpawn
+        {
+            Where spawnbot
+            
+            TotalCount 1000
+            MaxActive 15
+            SpawnCount 5
+
+            TotalCurrency 1000
+
+            WaitBetweenSpawns 10
+    
+            TFBot
+            {
+                Class Scout
+                Skill Expert
+                Attributes IgnoreFlag
+                WeaponRestrictions MeleeOnly
+                Attributes AlwaysCrit
+            }
+        }
+
+        WaveSpawn
+        {
+            Where spawnbot
+            
+            TotalCount  1000
+            MaxActive   5
+            SpawnCount  1
+
+            TotalCurrency 2000
+
+            WaitBetweenSpawns 10
+    
+            TFBot
+            {
+                Class Heavyweapons
+                ClassIcon heavy_mittens
+                Skill Expert
+                Attributes IgnoreFlag
+                WeaponRestrictions MeleeOnly
+                Attributes AlwaysCrit
+            }
+        }
+
+        WaveSpawn
+        {
+            Where spawnbot
+            
+            TotalCount 1000
+            MaxActive 10
+
+            TotalCurrency 3000
+
+            WaitBetweenSpawns 10
+    
+            TFBot
+            {
+                Class Pyro
+                Skill Expert
+                Attributes IgnoreFlag
+                WeaponRestrictions MeleeOnly
+                Attributes AlwaysCrit
+
+                Item "The Maul"
+
+                CharacterAttributes
+                {
+                    "move speed bonus"  4
+                }
+            }
+        }
+    }
+}
