@@ -1,4 +1,3 @@
-
 // bind o "script_execute mvm_arenatest; tf_bot_kill all"
 
 const ARENA_RADIUS              = 500.0;
@@ -6,6 +5,32 @@ const ARENA_RADIUS              = 500.0;
 local ARENA_DEBUG_LOCOMOTION    = 1 << 0;
 local ARENA_DEBUG_REVIVE        = 1 << 1;
 local ARENA_DEBUG               = ARENA_DEBUG_LOCOMOTION | ARENA_DEBUG_REVIVE;
+
+// No debugging on dedicated servers
+if ( IsDedicatedServer() ) {
+    ARENA_DEBUG = 0;
+}
+
+//
+// Helper functions
+//
+
+function GetClosestDefenderTo( where ) {
+    local player = null;
+    local closest = null;
+    local closest_dist = 999999999.9;
+    while ( player = Entities.FindByClassname( player, "player" ) ) {
+        // Must be an alive defender
+        if ( NetProps.GetPropInt( player, "m_lifeState" ) == 0 && player.GetTeam() == Constants.ETFTeam.TF_TEAM_PVE_DEFENDERS ) {
+            local dist = ( player.GetOrigin() - where ).Length();
+            if ( dist < closest_dist ) {
+                closest = player;
+                closest_dist = dist;
+            }
+        }
+    }
+    return closest;
+}
 
 //
 // Currency packs
@@ -27,6 +52,31 @@ function Currency_OnSpawn() {
 function Currency_OnThink() {
     if ( !self.IsValid() ) { return 0.0; }
 
+    // Find closest player that is not shooting
+    local player = null;
+    local closest = null;
+    local closest_dist = 999999999.9;
+    while ( player = Entities.FindByClassname( player, "player" ) ) {
+        // Must be an alive defender
+        if ( NetProps.GetPropInt( player, "m_lifeState" ) == 0 && player.GetTeam() == Constants.ETFTeam.TF_TEAM_PVE_DEFENDERS ) {
+            if ( !( NetProps.GetPropInt( player, "m_nButtons" ) & Constants.FButtons.IN_ATTACK ) ) {
+                local dist = ( player.GetOrigin() - self.GetOrigin() ).Length();
+                if ( dist < closest_dist ) {
+                    closest = player;
+                    closest_dist = dist;
+                }
+            } 
+        }
+    }
+    if ( closest ) {
+        local dir = closest.GetOrigin() + Vector( 0, 0, 20 ) - self.GetOrigin();
+        if ( dir.Length() <= 100.0 ) {
+            self.SetAbsOrigin( closest.GetOrigin() );
+        }
+        dir.Norm();
+        self.SetAbsVelocity( dir * 50000.0 * FrameTime() );
+    }
+
     if ( Time() >= self.GetScriptScope().m_flFadeStartTime ) {
         local speed  = ( Time() - self.GetScriptScope().m_flFadeStartTime ) / ( self.GetScriptScope().m_flDespawnTime - self.GetScriptScope().m_flFadeStartTime );
         speed *= CURRENCY_PACK_MAX_FADE_SPEED;
@@ -46,6 +96,9 @@ function Currency_OnThink() {
 // Reanimators
 //
 
+local REANIM_TELEFRAG_RADIUS    = 100.0;
+local REANUM_TELEFRAG_DAMAGE    = 500.0;
+
 function Reanimator_OnSpawn() {
     if ( !self.IsValid() ) { return 0.0; }
 
@@ -60,7 +113,7 @@ function Reanimator_OnThink() {
     local player = null;
     while ( player = Entities.FindByClassnameWithin( player, "player", self.GetOrigin(), 500.0 ) ) {
         // Must be an alive teammate
-        if ( NetProps.GetPropInt( player, "m_lifeState" ) == 0 ) {
+        if ( NetProps.GetPropInt( player, "m_lifeState" ) == 0 && self.GetTeam() == player.GetTeam() ) {
             if ( ARENA_DEBUG & ARENA_DEBUG_REVIVE ) {
                 DebugDrawLine( self.GetOrigin(), player.GetOrigin(), 0, 255, 0, false, 0.1 );
             }
@@ -74,13 +127,25 @@ function Reanimator_OnThink() {
         local owner = NetProps.GetPropEntity( self, "m_hOwner" );
         if ( owner && owner.IsValid() ) {
             local respawn_pos = self.GetOrigin();
-            respawn_pos.z += 200.0;
             owner.ForceRespawn();
             owner.SetAbsOrigin( respawn_pos );
+
+            // Telefrag enemies
+            if ( ARENA_DEBUG & ARENA_DEBUG_REVIVE ) {
+                DebugDrawCircle( owner.GetOrigin(), Vector( 255.0, 0.0, 0.0 ), 1.0, REANIM_TELEFRAG_RADIUS, false, 4.0 );
+            }
+            local enemy = null;
+            while ( enemy = Entities.FindByClassnameWithin( enemy, "player", owner.GetOrigin(), REANIM_TELEFRAG_RADIUS ) ) {
+                // Must be an alive enemy
+                if ( enemy.IsValid() && NetProps.GetPropInt( enemy, "m_lifeState" ) == 0 && enemy.GetTeam() != owner.GetTeam() ) {
+                    enemy.TakeDamageEx( owner, owner, null, Vector( 0.0, 0.0, 0.0 ), Vector( 0.0, 0.0, 0.0 ), REANUM_TELEFRAG_DAMAGE, 0 );
+
+                }
+            }
         }
     }
 
-    return 0.0;
+    return 0.1; // don't think every tick
 }
 
 //
@@ -122,21 +187,6 @@ function Human_OnSpawn() {
 function Human_Think() {
     if ( !self.IsValid() ) { return 0.0; }
 
-    // Collect money if not attacking
-    // TODO move this to currency pack code
-    local buttons = NetProps.GetPropInt( self, "m_nButtons" );
-    if ( !( buttons & Constants.FButtons.IN_ATTACK ) ) {
-        local pack = null;
-        while ( pack = Entities.FindByClassname( pack, "item_currencypack_custom" ) ) {
-            local dir = GetListenServerHost().GetOrigin() + Vector( 0, 0, 20 ) - pack.GetOrigin();
-            if ( dir.Length() <= 100.0 ) {
-                pack.SetAbsOrigin( GetListenServerHost().GetOrigin() );
-            }
-            dir.Norm();
-            pack.SetAbsVelocity( dir * 50000.0 * FrameTime() );
-        }
-    }
-
     // Use high FOV
     NetProps.SetPropInt( self, "m_iFOV", 105 );
 
@@ -173,14 +223,17 @@ function Pyro_OnThink() {
 
     // Predict the players path and try to intercept
     local loco = self.GetLocomotionInterface();
-    if ( loco ) {
+    local target = GetClosestDefenderTo( self.GetOrigin() );
+    if ( loco && target ) {
         local myspeed = self.GetAbsVelocity().Length();
-        local tgt = GetListenServerHost().GetOrigin();
-        tgt += GetListenServerHost().GetAbsVelocity() * ( ( tgt - self.GetOrigin() ).Length() / myspeed * 0.5 );
-        loco.DriveTo( tgt );
+        local target_pos = target.GetOrigin();
+        target_pos += target.GetAbsVelocity() * ( ( target_pos - self.GetOrigin() ).Length() / myspeed * 0.5 );
+        loco.DriveTo( target_pos );
         if ( ARENA_DEBUG & ARENA_DEBUG_LOCOMOTION ) {
-            DebugDrawLine( self.GetOrigin(), tgt, 0, 255, 0, false, 0.1 );
-        }
+            DebugDrawLine( self.GetOrigin(), target_pos, 0, 255, 0, false, 0.1 );
+        }  
+    } else {
+        printl( "bad" );
     }
 
     return 0.0;
@@ -295,7 +348,11 @@ function Boid_OnThink() {
     local vec_c = avg_pos - self.GetOrigin();
 
     // Track towards target
-    local vec_t = GetListenServerHost().GetOrigin() - self.GetOrigin();
+    local vec_t = Vector( 0, 0, 0 );
+    local best_target = GetClosestDefenderTo( self.GetOrigin() );
+    if ( best_target != null ) {
+        vec_t = best_target.GetOrigin() - self.GetOrigin();
+    }
 
     // Apply motion
     local vel = self.GetAbsVelocity() + vec_a + vec_c * 2.0 + vec_a + vec_t * 0.66;
